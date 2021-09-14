@@ -101,6 +101,9 @@ impl StatMonitor {
     pub fn new() -> StatMonitor {
         StatMonitor::create(100)
     }
+    pub fn with_sample_rate(max_samples_per_sec: u16) -> StatMonitor {
+        StatMonitor::create(max_samples_per_sec)
+    }
 
     pub fn get_info(&self) -> Option<ThreadInfoIterator> {
         match &self.asker {
