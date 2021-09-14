@@ -8,6 +8,16 @@ use std::{
 
 use crossbeam::queue::SegQueue;
 
+pub mod monitor {
+    mod stat_profiler;
+    
+    pub use stat_profiler::{
+        StatMonitor,
+        ThreadInfoIterator, ThreadInfoItem, ThreadInfo,
+    };
+    
+}
+
 lazy_static::lazy_static! {
     pub static ref THREAD_MONITOR: ThreadMonitor = ThreadMonitor::new();
 }
