@@ -22,11 +22,14 @@ lazy_static::lazy_static! {
     pub static ref THREAD_MONITOR: ThreadMonitor = ThreadMonitor::new();
 }
 
-pub fn spawn<F, T>(name: String, f: F) -> JoinHandle<T>
+pub fn spawn_builder<F, T>(builder: std::thread::Builder, f: F) -> JoinHandle<T>
     where F: FnOnce() -> T, F: Send + 'static, T: Send + 'static
 {
-    // like std::thread::spawn, but with name
-    Builder::new().name(name.clone()).spawn(move || {
+    builder.spawn(move || {
+        let name = match std::thread::current().name() {
+            Some(n) => n.to_string(),
+            None => format!("{:?}",std::thread::current().id()),
+        };
         let n = THREAD_MONITOR.started(name.clone(),None);
         let r = f();
         THREAD_MONITOR.finished(n,name);
@@ -34,17 +37,27 @@ pub fn spawn<F, T>(name: String, f: F) -> JoinHandle<T>
     }).unwrap()
 }
 
+pub fn spawn<F, T>(name: String, f: F) -> JoinHandle<T>
+    where F: FnOnce() -> T, F: Send + 'static, T: Send + 'static
+{
+    spawn_builder(Builder::new().name(name),f)
+}
+
 pub fn spawn_str<F, T>(name: &str, f: F) -> JoinHandle<T>
     where F: FnOnce() -> T, F: Send + 'static, T: Send + 'static
 {
-    spawn(name.to_string(),f)
+    spawn_builder(Builder::new().name(name.to_string()),f)
 }
 
-pub fn spawn_with_state<F, T>(name: String, f: F) -> JoinHandle<T>
+pub fn spawn_builder_with_state<F, T>(builder: std::thread::Builder,  f: F) -> JoinHandle<T>
     where F: FnOnce(ThreadState) -> T, F: Send + 'static, T: Send + 'static
 {
     // like std::thread::spawn, but with name
-    Builder::new().name(name.clone()).spawn(move || {
+    builder.spawn(move || {
+        let name = match std::thread::current().name() {
+            Some(n) => n.to_string(),
+            None => format!("{:?}",std::thread::current().id()),
+        };
         let state = ThreadState::new();
         let n = THREAD_MONITOR.started(name.clone(),Some(state.clone()));
         let r = f(state.clone());
@@ -54,10 +67,16 @@ pub fn spawn_with_state<F, T>(name: String, f: F) -> JoinHandle<T>
     }).unwrap()
 }
 
+pub fn spawn_with_state<F, T>(name: String, f: F) -> JoinHandle<T>
+    where F: FnOnce(ThreadState) -> T, F: Send + 'static, T: Send + 'static
+{
+    spawn_builder_with_state(Builder::new().name(name),f)
+}
+
 pub fn spawn_str_with_state<F, T>(name: &str, f: F) -> JoinHandle<T>
     where F: FnOnce(ThreadState) -> T, F: Send + 'static, T: Send + 'static
 {
-    spawn_with_state(name.to_string(),f)
+    spawn_builder_with_state(Builder::new().name(name.to_string()),f)
 }
 
 #[derive(Debug)]
