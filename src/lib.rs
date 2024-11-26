@@ -1,21 +1,17 @@
 use std::{
-    thread::{Builder,JoinHandle},
     sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
-        atomic::{AtomicBool,AtomicUsize,Ordering},
     },
+    thread::{Builder, JoinHandle},
 };
 
 use crossbeam::queue::SegQueue;
 
 pub mod monitor {
     mod stat_profiler;
-    
-    pub use stat_profiler::{
-        StatMonitor,
-        ThreadInfoIterator, ThreadInfoItem, ThreadInfo,
-    };
-    
+
+    pub use stat_profiler::{StatMonitor, ThreadInfo, ThreadInfoItem, ThreadInfoIterator};
 }
 
 lazy_static::lazy_static! {
@@ -23,71 +19,152 @@ lazy_static::lazy_static! {
 }
 
 pub fn spawn_builder<F, T>(builder: std::thread::Builder, f: F) -> JoinHandle<T>
-    where F: FnOnce() -> T, F: Send + 'static, T: Send + 'static
+where
+    F: FnOnce() -> T,
+    F: Send + 'static,
+    T: Send + 'static,
 {
-    builder.spawn(move || {
-        let name = match std::thread::current().name() {
-            Some(n) => n.to_string(),
-            None => format!("{:?}",std::thread::current().id()),
-        };
-        let n = THREAD_MONITOR.started(name.clone(),None);
-        let r = f();
-        THREAD_MONITOR.finished(n,name);
-        r
-    }).unwrap()
+    builder
+        .spawn(move || {
+            let name = match std::thread::current().name() {
+                Some(n) => n.to_string(),
+                None => format!("{:?}", std::thread::current().id()),
+            };
+            let n = THREAD_MONITOR.started(name.clone(), None);
+            let r = f();
+            THREAD_MONITOR.finished(n, name);
+            r
+        })
+        .unwrap()
 }
 
 pub fn spawn<F, T>(name: String, f: F) -> JoinHandle<T>
-    where F: FnOnce() -> T, F: Send + 'static, T: Send + 'static
+where
+    F: FnOnce() -> T,
+    F: Send + 'static,
+    T: Send + 'static,
 {
-    spawn_builder(Builder::new().name(name),f)
+    spawn_builder(Builder::new().name(name), f)
 }
 
 pub fn spawn_str<F, T>(name: &str, f: F) -> JoinHandle<T>
-    where F: FnOnce() -> T, F: Send + 'static, T: Send + 'static
+where
+    F: FnOnce() -> T,
+    F: Send + 'static,
+    T: Send + 'static,
 {
-    spawn_builder(Builder::new().name(name.to_string()),f)
+    spawn_builder(Builder::new().name(name.to_string()), f)
 }
 
-pub fn spawn_builder_with_state<F, T>(builder: std::thread::Builder,  f: F) -> JoinHandle<T>
-    where F: FnOnce(ThreadState) -> T, F: Send + 'static, T: Send + 'static
+pub fn spawn_builder_with_state<F, T>(builder: std::thread::Builder, f: F) -> JoinHandle<T>
+where
+    F: FnOnce(ThreadState) -> T,
+    F: Send + 'static,
+    T: Send + 'static,
 {
     // like std::thread::spawn, but with name
-    builder.spawn(move || {
-        let name = match std::thread::current().name() {
-            Some(n) => n.to_string(),
-            None => format!("{:?}",std::thread::current().id()),
-        };
-        let state = ThreadState::new();
-        let n = THREAD_MONITOR.started(name.clone(),Some(state.clone()));
-        let r = f(state.clone());
-        state.done();
-        THREAD_MONITOR.finished(n,name);
-        r
-    }).unwrap()
+    builder
+        .spawn(move || {
+            let name = match std::thread::current().name() {
+                Some(n) => n.to_string(),
+                None => format!("{:?}", std::thread::current().id()),
+            };
+            let state = ThreadState::new();
+            let n = THREAD_MONITOR.started(name.clone(), Some(state.clone()));
+            let r = f(state.clone());
+            state.done();
+            THREAD_MONITOR.finished(n, name);
+            r
+        })
+        .unwrap()
 }
 
 pub fn spawn_with_state<F, T>(name: String, f: F) -> JoinHandle<T>
-    where F: FnOnce(ThreadState) -> T, F: Send + 'static, T: Send + 'static
+where
+    F: FnOnce(ThreadState) -> T,
+    F: Send + 'static,
+    T: Send + 'static,
 {
-    spawn_builder_with_state(Builder::new().name(name),f)
+    spawn_builder_with_state(Builder::new().name(name), f)
 }
 
 pub fn spawn_str_with_state<F, T>(name: &str, f: F) -> JoinHandle<T>
-    where F: FnOnce(ThreadState) -> T, F: Send + 'static, T: Send + 'static
+where
+    F: FnOnce(ThreadState) -> T,
+    F: Send + 'static,
+    T: Send + 'static,
 {
-    spawn_builder_with_state(Builder::new().name(name.to_string()),f)
+    spawn_builder_with_state(Builder::new().name(name.to_string()), f)
+}
+
+use std::cell::RefCell;
+thread_local!(static TOKIO_LOCAL: RefCell<Option<TokioLocalData>> = RefCell::new(None));
+
+struct TokioLocalData {
+    monitor_n: usize,
+    state: ThreadState,
+}
+
+pub fn tokio_start() {
+    let name = match std::thread::current().name() {
+        Some(n) => n.to_string(),
+        None => format!("{:?}", std::thread::current().id()),
+    };
+    let state = ThreadState::new();
+    let n = THREAD_MONITOR.started(name, Some(state.clone()));
+    TOKIO_LOCAL.set(Some(TokioLocalData {
+        monitor_n: n,
+        state,
+    }));
+}
+
+pub fn tokio_park() {
+    TOKIO_LOCAL.with_borrow(|opt_data| {
+        if let Some(TokioLocalData { state, .. }) = opt_data {
+            state.idle();
+        }
+    });
+}
+
+pub fn tokio_unpark() {
+    TOKIO_LOCAL.with_borrow(|opt_data| {
+        if let Some(TokioLocalData { state, .. }) = opt_data {
+            state.payload();
+        }
+    });
+}
+
+pub fn tokio_stop() {
+    let name = match std::thread::current().name() {
+        Some(n) => n.to_string(),
+        None => format!("{:?}", std::thread::current().id()),
+    };
+    TOKIO_LOCAL.with_borrow(|opt_data| {
+        if let Some(TokioLocalData { monitor_n, state }) = opt_data {
+            state.done();
+            THREAD_MONITOR.finished(*monitor_n, name);
+        }
+    });
 }
 
 #[derive(Debug)]
 pub enum ThreadStatus {
-    Started{ n: usize, name: String, tm: time::OffsetDateTime, state: Option<ThreadState> },
-    Finished{ n: usize, name: String, tm: time::OffsetDateTime },
+    Started {
+        n: usize,
+        name: String,
+        tm: time::OffsetDateTime,
+        state: Option<ThreadState>,
+    },
+    Finished {
+        n: usize,
+        name: String,
+        tm: time::OffsetDateTime,
+    },
 }
 
-#[derive(Debug,Clone,Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum State {
-    Init,    
+    Init,
     Payload,
     Idle,
     Wait,
@@ -112,31 +189,31 @@ impl Into<usize> for State {
             State::Payload => 1,
             State::Idle => 2,
             State::Wait => 3,
-            State::Done => 4,          
+            State::Done => 4,
         }
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ThreadState(Arc<AtomicUsize>);
 impl ThreadState {
     fn new() -> ThreadState {
         ThreadState(Arc::new(AtomicUsize::new(State::Init.into())))
     }
     pub fn get(&self) -> Option<State> {
-        State::opt_from(self.0.load(Ordering::SeqCst))     
+        State::opt_from(self.0.load(Ordering::SeqCst))
     }
     pub fn payload(&self) {
-        self.0.store(State::Payload.into(),Ordering::SeqCst);
+        self.0.store(State::Payload.into(), Ordering::SeqCst);
     }
     pub fn idle(&self) {
-        self.0.store(State::Idle.into(),Ordering::SeqCst);
+        self.0.store(State::Idle.into(), Ordering::SeqCst);
     }
     pub fn wait(&self) {
-        self.0.store(State::Wait.into(),Ordering::SeqCst);
+        self.0.store(State::Wait.into(), Ordering::SeqCst);
     }
     fn done(&self) {
-        self.0.store(State::Done.into(),Ordering::SeqCst);
+        self.0.store(State::Done.into(), Ordering::SeqCst);
     }
 }
 
@@ -155,26 +232,35 @@ impl ThreadMonitor {
         }
     }
     fn started(&self, name: String, state: Option<ThreadState>) -> usize {
-        let n = self.next.fetch_add(1,Ordering::SeqCst);
-        log::info!("thread {}: {} has been spawned",n,name);
+        let n = self.next.fetch_add(1, Ordering::SeqCst);
+        log::info!("thread {}: {} has been spawned", n, name);
         if self.on.load(Ordering::SeqCst) {
-            self.messages.push(ThreadStatus::Started{ n: n, name, tm: time::OffsetDateTime::now_utc(), state: state });
+            self.messages.push(ThreadStatus::Started {
+                n: n,
+                name,
+                tm: time::OffsetDateTime::now_utc(),
+                state: state,
+            });
         }
         n
     }
     fn finished(&self, n: usize, name: String) {
-        log::info!("thread {}: {} finished",n,name);
+        log::info!("thread {}: {} finished", n, name);
         if self.on.load(Ordering::SeqCst) {
-            self.messages.push(ThreadStatus::Finished{ n: n, name, tm: time::OffsetDateTime::now_utc() });
-        }        
+            self.messages.push(ThreadStatus::Finished {
+                n: n,
+                name,
+                tm: time::OffsetDateTime::now_utc(),
+            });
+        }
     }
     pub fn turn_on(&self) {
         log::info!("thread monitor processing is turned ON");
-        self.on.store(true,Ordering::SeqCst);
+        self.on.store(true, Ordering::SeqCst);
     }
     pub fn turn_off(&self) {
         log::info!("thread monitor processing is turned OFF");
-        self.on.store(false,Ordering::SeqCst);
+        self.on.store(false, Ordering::SeqCst);
     }
     pub fn process(&self) -> Option<Vec<ThreadStatus>> {
         if self.on.load(Ordering::SeqCst) {
@@ -188,5 +274,3 @@ impl ThreadMonitor {
         }
     }
 }
-
-

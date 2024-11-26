@@ -1,11 +1,23 @@
 [package]
-name = "threads"
-version = "0.1.0"
-edition = "2018"
+name = "thread-monitor"
+version = "0.1.1"
+edition = "2021"
 
+authors = ["merl <merl.001.mia@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+description = "Thread monitor"
+
+repository = "https://github.com/merl-twin/threads"
+homepage = "https://github.com/merl-twin/threads"
+
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+]
 
 [dependencies]
-oneshot = { git = "https://github.com/merl-twin/oneshot.git" }
+oneshot = { version = "0.2", package = "transmitter" }
 
 crossbeam = "0.8"
 lazy_static = "1.4"
